@@ -2,13 +2,17 @@ adjustText
 alembic
 altair
 anthropic
+attrs
 cattrs
 datasets
 fastapi==0.100.0
 fire
 hydra-core
+langchain-core
+langchain-ollama
 matplotlib
 mistralai
+ollama
 openai==0.28.0
 pandas
 pebble

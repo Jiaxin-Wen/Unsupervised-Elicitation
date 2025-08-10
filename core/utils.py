@@ -86,19 +86,44 @@ def load_secrets(
     organization: str = None,
 ):
     secrets = {}
-    with open(file_path) as f:
-        for line in f:
-            key, value = line.strip().split("=", 1)
-            secrets[key] = value
+    
+    # Check if secrets file exists
+    if not os.path.exists(file_path):
+        LOGGER.warning(f"Secrets file not found at {file_path}. Using default values for Ollama-only setup.")
+        # Provide minimal defaults for Ollama usage
+        secrets = {
+            openai_tag: "placeholder",
+            "LLAMA_API_BASE": "http://localhost:11434",
+            "NYU_ORG": "placeholder",
+            "ARG_ORG": "placeholder",
+            anthropic_tag: "placeholder",
+            mistral_tag: "placeholder",
+            replicate_tag: "placeholder",
+        }
+    else:
+        with open(file_path) as f:
+            for line in f:
+                if '=' in line:
+                    key, value = line.strip().split("=", 1)
+                    secrets[key] = value
 
-    openai.api_key = secrets[openai_tag]
-    os.environ['LLAMA_API_BASE'] = secrets['LLAMA_API_BASE']
-    # replicate.api_token = secrets[replicate_tag]
-    # os.environ["ANTHROPIC_API_KEY"] = secrets[anthropic_tag]
-    # os.environ["MISTRAL_API_KEY"] = secrets[mistral_tag]
-    # os.environ["REPLICATE_API_KEY"] = secrets[replicate_tag]
+    # Only set OpenAI key if it's not a placeholder
+    if secrets.get(openai_tag, "placeholder") != "placeholder":
+        openai.api_key = secrets[openai_tag]
+    
+    if secrets.get('LLAMA_API_BASE'):
+        os.environ['LLAMA_API_BASE'] = secrets['LLAMA_API_BASE']
+    
+    # Only set other environment variables if they exist and aren't placeholders
+    for env_key, secret_key in [
+        ("ANTHROPIC_API_KEY", anthropic_tag),
+        ("MISTRAL_API_KEY", mistral_tag), 
+        ("REPLICATE_API_KEY", replicate_tag)
+    ]:
+        if secrets.get(secret_key) and secrets[secret_key] != "placeholder":
+            os.environ[env_key] = secrets[secret_key]
 
-    if organization is not None:
+    if organization is not None and secrets.get(organization):
         openai.organization = secrets[organization]
     if secrets.get("API_BASE") is not None:
         openai.api_base = secrets['API_BASE']
@@ -145,7 +170,7 @@ def delete_old_prompt_files(
     """
     Delete all files in the folder that:
     - Are more than max_age_minutes old
-    - AND are not one of the keep_recent most recent files
+    - AND are not one of the y_most_recent files, delete it
     """
     if not os.path.exists(path):
         return

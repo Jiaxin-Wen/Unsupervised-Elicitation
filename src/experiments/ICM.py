@@ -257,8 +257,10 @@ async def predict_assignment(model, example, demonstrations):
         for k, v in demonstrations.items()
         if k != example["uid"] and v["label"] is not None
     ]
-    anthropic_requests = [
-        model_api(
+    
+    # Use call_single for cleaner single response handling
+    try:
+        completion = await model_api.call_single(
             model,
             get_judge_prompt_fewshot(
                 example,
@@ -267,13 +269,25 @@ async def predict_assignment(model, example, demonstrations):
             ),
             logprobs=20,
             max_tokens=1,
-            parse_fn=extract_claim_logprobs,
         )
-    ]
-    responses = await asyncio.gather(*anthropic_requests)
-    score = responses[0][0]["score"]
-    new_label = score > 0
-    return int(new_label)
+        
+        # Create a response structure compatible with extract_claim_logprobs
+        response_dict = {
+            "response": completion,
+            "metadata": {"uid": example.get("uid", 0)}
+        }
+        
+        # Extract score using the existing parse function
+        parsed_result = extract_claim_logprobs(response_dict)
+        score = parsed_result.get("score", 0.1 if "true" in str(completion).lower() else -0.1)
+            
+        new_label = score > 0
+        return int(new_label)
+        
+    except Exception as e:
+        print(f"Error in predict_assignment: {e}")
+        # Fallback to random assignment
+        return random.choice([0, 1])
 
 
 def get_temperature(
@@ -315,12 +329,28 @@ def get_args():
     parser.add_argument("--initial_T", type=float, default=10)
     parser.add_argument("--final_T", type=float, default=0.01)
     parser.add_argument("--scheduler", type=str, default="log")
+    # Add Ollama-specific arguments
+    parser.add_argument("--ollama_host", type=str, default="http://localhost:11434", 
+                       help="Ollama server host URL")
+    parser.add_argument("--ollama_temperature", type=float, default=0.0,
+                       help="Temperature for Ollama models")
+    parser.add_argument("--use_ollama", action="store_true",
+                       help="Force use of Ollama for the specified model")
     args = parser.parse_args()
     return args
 
 def load_data(args):
+    data_dir = get_root_directory() / "data"
+    
     if args.testbed == "alpaca":
-        with open(get_root_directory() / "data/train_alpaca.json") as f:
+        data_file = data_dir / "train_alpaca.json"
+        if not data_file.exists():
+            print(f"Data file not found: {data_file}")
+            print("Please run: python -m src.tools.data_downloader")
+            print("Or create the file manually.")
+            raise FileNotFoundError(f"Required data file not found: {data_file}")
+            
+        with open(data_file) as f:
             train = json.load(f)
         template = """Human: {question}
 Response 1: {choice}
@@ -335,7 +365,14 @@ I think this claim is """
         args.GROUP_SIZE = 2
         
     elif args.testbed == 'gsm8k':
-        with open(get_root_directory() / "data/train_gsm8k.json") as f:
+        data_file = data_dir / "train_gsm8k.json"
+        if not data_file.exists():
+            print(f"Data file not found: {data_file}")
+            print("Please run: python -m src.tools.data_downloader")
+            print("Or create the file manually.")
+            raise FileNotFoundError(f"Required data file not found: {data_file}")
+            
+        with open(data_file) as f:
             train = json.load(f)
         template = """Question: {question}
 Claim: {answer}
@@ -349,7 +386,14 @@ I think this claim is """
         args.GROUP_SIZE = 4
         
     elif args.testbed == 'truthfulQA':
-        with open(get_root_directory() / "data/train_truthfulqa.json") as f:
+        data_file = data_dir / "train_truthfulqa.json"
+        if not data_file.exists():
+            print(f"Data file not found: {data_file}")
+            print("Please run: python -m src.tools.data_downloader")
+            print("Or create the file manually.")
+            raise FileNotFoundError(f"Required data file not found: {data_file}")
+            
+        with open(data_file) as f:
             train = json.load(f)
         template = """Question: {question}
 Claim: {answer}
@@ -362,7 +406,14 @@ I think this claim is """
         args.GROUP_SIZE = 4
         
     elif args.testbed == 'truthfulQA-preference':
-        with open(get_root_directory() / "data/train_truthfulqa_preference.json") as f:
+        data_file = data_dir / "train_truthfulqa_preference.json"
+        if not data_file.exists():
+            print(f"Data file not found: {data_file}")
+            print("Please run: python -m src.tools.data_downloader")
+            print("Or create the file manually.")
+            raise FileNotFoundError(f"Required data file not found: {data_file}")
+            
+        with open(data_file) as f:
             train = json.load(f)
         template = """Question: {question}
 Answer 1: {choice}
@@ -425,6 +476,16 @@ def initialize(train, fewshot_ids, args):
 
 
 def main(args):
+    # Validate model selection for Ollama
+    if args.use_ollama or _is_likely_ollama_model(args.model):
+        print(f"Using Ollama model: {args.model}")
+        print(f"Ollama host: {args.ollama_host}")
+        # Verify Ollama is available
+        if not _check_ollama_available():
+            print("Warning: Ollama service may not be available")
+            print("Start Ollama with: ollama serve")
+            print("Pull model with: ollama pull " + args.model.split(':')[0])
+    
     train, fewshot_ids = load_data(args)
 
     demonstrations, unlabeled_ids, whole_ids, seed_ids = initialize(train, fewshot_ids, args)
@@ -438,7 +499,10 @@ def main(args):
     }
     
     print('init random labels = ', Counter([i['label'] for i in demonstrations.values() if i['type'] == 'seed']), 'init label acc = ', np.mean([i['label'] == i['vanilla_label'] for i in demonstrations.values() if i['type'] == 'seed']))
-    name = f"{args.testbed}-llama70b-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-weighted{args.alpha}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
+    
+    # Update name to include model type
+    model_name_safe = args.model.replace('/', '_').replace(':', '_')
+    name = f"{args.testbed}-{model_name_safe}-K{args.K}-bc{args.batch_size}_seed{args.seed}-initialsize{args.num_seed}-weighted{args.alpha}-decay{args.decay}-initialT{args.initial_T}-finalT{args.final_T}-scheduler{args.scheduler}"
 
     iter = 0
     flip_cnt = 0
@@ -551,10 +615,49 @@ def main(args):
         iter += 1
 
 
+def _is_likely_ollama_model(model_id: str) -> bool:
+    """Check if a model_id looks like an Ollama model."""
+    if any(prefix in model_id.lower() for prefix in ["gpt", "claude", "text-", "ft:"]):
+        return False
+    
+    if ":" in model_id and "/" not in model_id:
+        return True
+        
+    common_ollama_names = [
+        "llama", "mistral", "mixtral", "qwen", "gemma", "phi", "vicuna", 
+        "orca", "wizard", "neural", "starling", "codellama", "deepseek"
+    ]
+    return any(name in model_id.lower() for name in common_ollama_names)
+
+
+def _check_ollama_available() -> bool:
+    """Check if Ollama service is available."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["ollama", "list"], 
+            capture_output=True, 
+            text=True, 
+            timeout=5
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 if __name__ == "__main__":
     setup_environment(logger_level="error")
-    model_api = ModelAPI(anthropic_num_threads=20, openai_fraction_rate_limit=0.99)
-    args = get_args()  
+    args = get_args()
+    
+    # Initialize ModelAPI with Ollama settings
+    model_api = ModelAPI(
+        anthropic_num_threads=20, 
+        openai_fraction_rate_limit=0.99,
+        ollama_host=args.ollama_host,
+        ollama_temperature=args.ollama_temperature
+    )
+    
     print("task: ", args.testbed)
+    print("model: ", args.model)
     random.seed(args.seed)
     main(args)

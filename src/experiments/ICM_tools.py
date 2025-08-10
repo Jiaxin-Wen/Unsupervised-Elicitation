@@ -86,9 +86,6 @@ def pick_two_inconsistent_claims(data):
                         (group[i]['consistency_key'] in ['A>B', 'B>A']) and (group[i]['label'] == group[j]['label'] == 0) # in comparative tasks, at least one of the two claims is correct
                     )
                 ):
-                # if (group[i]["vanilla_label"] != group[j]["vanilla_label"]) and (
-                    # group[i]["label"] == group[j]["label"]
-                # ):
                     inconsistent_pairs[len(inconsistent_pairs)] = {
                         "claim_1": group[i],
                         "claim_2": group[j],
@@ -104,8 +101,11 @@ def pick_two_inconsistent_claims(data):
                         "consistency_id": group[i]["consistency_id"],
                         "type": "implication",
                     }
-    random.shuffle(inconsistent_pairs)
-    return inconsistent_pairs
+    
+    # Convert to list for random.shuffle compatibility
+    inconsistent_pairs_list = list(inconsistent_pairs.items())
+    random.shuffle(inconsistent_pairs_list)
+    return dict(inconsistent_pairs_list)
 
 
 def propose_consistencyfix(

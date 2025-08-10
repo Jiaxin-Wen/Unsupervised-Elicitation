@@ -22,6 +22,37 @@ We introduce a new unsupervised algorithm for eliciting skills from pretrained l
 
 ### API for Pretrained Base Models
 
+You have two options for running language models:
+
+#### Option 1: Ollama (Recommended for Local Development)
+
+Ollama provides an easy way to run models locally:
+
+1. Install Ollama: Visit [ollama.ai](https://ollama.ai) or run:
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ```
+
+2. Start Ollama service:
+   ```bash
+   ollama serve
+   ```
+
+3. Pull models:
+   ```bash
+   ollama pull llama3.2:latest
+   ollama pull codellama:latest
+   ```
+
+4. Use the setup script for guided installation:
+   ```bash
+   python setup_ollama.py
+   ```
+
+See the [Ollama Integration Guide](docs/ollama_integration.md) for detailed instructions.
+
+#### Option 2: vLLM/API Deployment
+
 You should have access to an API for pretrained base models, which can return top-K (e.g. 20) logprobs.
 
 Since most public api servers (e.g. openrouter) only support post-trained chat models, you probably need to deploy pretrained base models yourself. For example, we use vllm to deploy llama models in our experiments.
